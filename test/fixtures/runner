@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+while true; do curl -s localhost:8080/status; sleep 30; done

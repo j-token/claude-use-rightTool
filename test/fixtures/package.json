@@ -1,0 +1,10 @@
+{
+  "name": "fixtures",
+  "private": true,
+  "scripts": {
+    "db:prep": "until pg_isready -h localhost; do sleep 2; done",
+    "prepare-env": "node sync.mjs",
+    "build": "node -e \"console.log('built')\"",
+    "test": "node --test"
+  }
+}
