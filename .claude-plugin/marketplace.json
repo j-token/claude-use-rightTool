@@ -1,0 +1,14 @@
+{
+  "name": "use-right-tool",
+  "description": "Local marketplace for the use-right-tool plugin.",
+  "owner": {
+    "name": "leeheon"
+  },
+  "plugins": [
+    {
+      "name": "use-right-tool",
+      "description": "Blocks shell-based loops/polling/monitoring and points Claude to Monitor, run_in_background, /loop, or CronCreate. Judged by Jev.",
+      "source": "./"
+    }
+  ]
+}
