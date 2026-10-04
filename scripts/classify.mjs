@@ -42,14 +42,15 @@ export function parseThreshold(raw) {
 const CATEGORIES = {
   poll_until_condition: {
     instructions:
-      "Waits for some external state to change: repeatedly re-checks a status (HTTP endpoint, port, file existence, process, CI or deploy status, query result) with waits between checks, and exits once the condition is met or an attempt cap is reached. The repetition may come from while/until/for loops or from tools that repeat a command, such as seq | xargs, find -exec, or recursion.",
+      "Waits for some external state to change: repeatedly re-checks a status (HTTP endpoint, port, file existence, process, CI or deploy status, query result) with waits between checks, and exits once the condition is met or an attempt cap is reached. The expected wait is short, from seconds to a few minutes (a server starting, a file appearing, a CI run finishing). The repetition may come from while/until/for loops or from tools that repeat a command, such as seq | xargs, find -exec, or recursion.",
     examples: [
       "until curl -sf localhost:3000/health; do sleep 1; done",
       "while (-not (Test-Path out.json)) { Start-Sleep 2 }",
       "for i in $(seq 1 60); do gh run view 123 --json status | grep -q completed && break; sleep 10; done",
       "seq 30 | xargs -I{} sh -c 'test -f out.json && exit 255; sleep 2'",
     ],
-    not_this: "Retrying the same action a few times because it failed transiently (a flaky install or network request) is finite_iteration.",
+    not_this:
+      "Retrying the same action a few times because it failed transiently (a flaky install or network request) is finite_iteration. A loop that watches a long-running job (training, deployment, a large build or test suite) whose condition may take tens of minutes or hours to become true, or a watchdog that checks several progress, failure, or stall conditions at once, is repeat_forever even when it has an end condition.",
   },
   wait_for_completion: {
     instructions:
@@ -70,13 +71,14 @@ const CATEGORIES = {
   },
   repeat_forever: {
     instructions:
-      "Keeps re-running a check or a job at an interval for a long time, acting as a scheduler, cron, or ongoing monitor. This includes loops with no end condition and loops with a numeric bound whose total running time (iterations times interval) spans many minutes or hours.",
+      "Keeps re-running a check or a job at an interval for a long time, acting as a scheduler, cron, or ongoing monitor. This includes loops with no end condition, loops with a numeric bound whose total running time (iterations times interval) spans many minutes or hours, and until/while loops that watch a long-running job (training, deployment, a large build or test suite) for a state change, failure, or stall that may take tens of minutes or hours.",
     examples: [
       "while true; do curl -s api/status; sleep 30; done",
       "while ($true) { git pull; Start-Sleep 300 }",
       "for i in $(seq 1 100); do git pull; sleep 300; done",
       "for i in {1..1440}; do curl -s api/status >> status.log; sleep 60; done",
       "1..288 | ForEach-Object { Invoke-RestMethod $url; Start-Sleep 300 }",
+      "until [ \"$(jq -r .status run/status.json)\" != running ] || [ $(( $(date +%s) - $(stat -c %Y run/train.log) )) -gt 600 ]; do sleep 60; done",
     ],
   },
   watch_mode_process: {
@@ -222,13 +224,14 @@ export async function judge(request, { apiKey, runInBackground, threshold }) {
 const GUIDANCE = {
   poll_until_condition: [
     "This command polls a status in a shell loop.",
-    "- If you only need one notification when the condition becomes true: run the same `until` loop with `run_in_background: true`. The harness notifies you when it exits, so you do not have to wait on it yourself.",
-    "- If you need an event for each change or progress step: use the `Monitor` tool (each stdout line becomes one notification).",
+    "- For a short wait (a few minutes at most) where you only need one notification when the condition becomes true: run the same `until` loop with `run_in_background: true`. The harness notifies you when it exits, so you do not have to wait on it yourself.",
+    "- To watch a long-running job (training, deployment, a large build) or to get an event for each change, progress step, or failure: use the `Monitor` tool (each stdout line becomes one notification). Do not move such a watch into a background `until` loop.",
   ],
   wait_for_completion: [
     "This command sleeps or blocks to wait for another job to finish.",
     "- If you started that job with `run_in_background: true`, you are notified automatically when it finishes. Do not wait with a fixed sleep.",
-    "- To wait for a specific condition (a log line, a file appearing, a port opening): run `until <condition>; do sleep 1; done` with `run_in_background: true`.",
+    "- To wait briefly (a few minutes at most) for a specific condition (a log line, a file appearing, a port opening): run `until <condition>; do sleep 1; done` with `run_in_background: true`.",
+    "- To watch a long-running job or several events: use the `Monitor` tool.",
   ],
   stream_follow: [
     "This command follows a log or output stream continuously (tail -f, Get-Content -Wait, watch, ...).",
