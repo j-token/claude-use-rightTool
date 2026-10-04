@@ -8,10 +8,10 @@ which built-in feature to use instead. The judgment is made by TypeSafe's **Jev*
 
 | Jev verdict | Foreground | `run_in_background: true` | Suggested feature |
 | --- | --- | --- | --- |
-| `poll_until_condition` (waits for external state, then exits) | Block | Allow (the officially recommended pattern) | `run_in_background` + `until`, `Monitor` |
+| `poll_until_condition` (short wait for external state, then exits) | Block | Allow (the officially recommended pattern) | `run_in_background` + `until` for a short wait, `Monitor` for a long-running job |
 | `wait_for_completion` (sleeps, then checks a result) | Block | Allow | `run_in_background` notification |
 | `stream_follow` (tail -f, Get-Content -Wait, watch) | Block | Block | `Monitor` |
-| `repeat_forever` (interval loop running for a long time, bounded or not) | Block | Block | `Monitor`, `/loop`, `CronCreate` |
+| `repeat_forever` (interval loop running for a long time, bounded or not, including an `until` loop that watches a job for tens of minutes or hours) | Block | Block | `Monitor`, `/loop`, `CronCreate` |
 | `watch_mode_process` (attached dev server, `--watch`) | Block | Allow | `run_in_background` + `Monitor` |
 | `finite_iteration`, `single_action` | Allow | Allow | - |
 

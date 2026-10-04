@@ -7,10 +7,10 @@ PreToolUse 훅에서 막고, Claude Code 전용 기능을 쓰라고 안내하는
 
 | Jev 판별 | 포그라운드 | `run_in_background: true` | 안내하는 도구 |
 | --- | --- | --- | --- |
-| `poll_until_condition` (외부 상태를 기다렸다가 끝나는 폴링) | 차단 | 허용 (공식 권장 패턴) | `run_in_background` + `until`, `Monitor` |
+| `poll_until_condition` (외부 상태를 잠깐 기다렸다가 끝나는 폴링) | 차단 | 허용 (공식 권장 패턴) | 짧은 대기는 `run_in_background` + `until`, 장기 작업 감시는 `Monitor` |
 | `wait_for_completion` (sleep 후 결과 확인) | 차단 | 허용 | `run_in_background` 알림 |
 | `stream_follow` (tail -f, Get-Content -Wait, watch) | 차단 | 차단 | `Monitor` |
-| `repeat_forever` (오래 도는 주기 루프, 횟수 제한 여부와 무관) | 차단 | 차단 | `Monitor`, `/loop`, `CronCreate` |
+| `repeat_forever` (오래 도는 주기 루프, 횟수 제한 여부와 무관. 수십 분~몇 시간짜리 작업을 감시하는 `until` 루프 포함) | 차단 | 차단 | `Monitor`, `/loop`, `CronCreate` |
 | `watch_mode_process` (터미널에 붙어 도는 dev 서버, --watch) | 차단 | 허용 | `run_in_background` + `Monitor` |
 | `finite_iteration`, `single_action` | 허용 | 허용 | - |
 
