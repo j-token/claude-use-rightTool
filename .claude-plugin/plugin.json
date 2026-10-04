@@ -1,6 +1,6 @@
 {
   "name": "use-right-tool",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Blocks shell-based loops, polling, and monitoring (judged by TypeSafe Jev) and tells Claude to use Monitor, run_in_background, /loop, or CronCreate instead.",
   "author": {
     "name": "leeheon"
