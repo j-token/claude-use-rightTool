@@ -37,7 +37,7 @@ const SCRIPT_EXT = /\.(py|pyw|js|mjs|cjs|ts|mts|cts|tsx|jsx|sh|bash|zsh|ps1|psm1
 const JS_EXT = /\.(js|mjs|cjs|ts|mts|cts|tsx|jsx)$/i;
 const JS_RESOLVE = ["", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".tsx", ".jsx", "/index.js", "/index.ts", "/index.mjs"];
 
-const commandName = (word) => basename(word.replace(/\\/g, "/")).toLowerCase().replace(/\.exe$/, "");
+export const commandName = (word) => basename(word.replace(/\\/g, "/")).toLowerCase().replace(/\.exe$/, "");
 
 function isNetworkPath(p) {
   return /^(\\\\|\/\/)/.test(p);
@@ -132,7 +132,7 @@ function analyze(ctx, command, shell, cwd, depth, nesting = 0) {
 }
 
 // 키워드, 환경 변수 할당, sudo/env/timeout/npx 같은 래퍼를 걷어 내고 실제 명령을 남긴다.
-function stripPrefix(words, shell) {
+export function stripPrefix(words, shell) {
   let k = 0;
   while (k < words.length) {
     const w = words[k];
