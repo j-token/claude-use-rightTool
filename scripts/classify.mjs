@@ -5,8 +5,9 @@ import { redact } from "./redact.mjs";
 import { loopRelatedLines } from "./signals.mjs";
 
 export const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
-// 임계값을 이 버전에 맞춰 조정했다. 올릴 때는 test/cases.mjs 를 다시 돌린다.
-export const DEFAULT_MODEL = "jev-1.13.0";
+// 임계값과 프롬프트를 이 버전에 맞춰 조정했다. 바꿀 때는 test/cases.mjs 를 다시 돌린다.
+// 같은 케이스에서 1.14 가 1.13 보다 경계 마진이 넓었다(최소 0.25 대 0.13).
+export const DEFAULT_MODEL = "jev-1.14.0";
 export const DEFAULT_THRESHOLD = 0.6;
 // 임계값 ±이 범위면 한 번 더 물어 평균을 낸다(같은 입력도 ±0.05~0.1 흔들린다).
 export const BORDERLINE = 0.15;
