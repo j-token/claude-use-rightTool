@@ -17,10 +17,10 @@ Jev 호출 없이 막고 `Write` / `Edit` / `Grep` / `Glob` 도구를 쓰라고 
 
 | Jev 판별 | 포그라운드 | `run_in_background: true` | 안내하는 도구 |
 | --- | --- | --- | --- |
-| `poll_until_condition` (외부 상태를 기다렸다가 끝나는 폴링) | 차단 | 허용 (공식 권장 패턴) | `run_in_background` + `until`, `Monitor` |
+| `poll_until_condition` (외부 상태를 잠깐 기다렸다가 끝나는 폴링) | 차단 | 허용 (공식 권장 패턴) | 짧은 대기는 `run_in_background` + `until`, 장기 작업 감시는 `Monitor` |
 | `wait_for_completion` (sleep 후 결과 확인) | 차단 | 허용 | `run_in_background` 알림 |
 | `stream_follow` (tail -f, Get-Content -Wait, watch) | 차단 | 차단 | `Monitor` |
-| `repeat_forever` (오래 도는 주기 루프, 횟수 제한 여부와 무관) | 차단 | 차단 | `Monitor`, `/loop`, `CronCreate` |
+| `repeat_forever` (오래 도는 주기 루프, 횟수 제한 여부와 무관. 수십 분~몇 시간짜리 작업을 감시하는 `until` 루프 포함) | 차단 | 차단 | `Monitor`, `/loop`, `CronCreate` |
 | `watch_mode_process` (터미널에 붙어 도는 dev 서버, --watch) | 차단 | 허용 | `run_in_background` + `Monitor` |
 | `finite_iteration`, `single_action` | 허용 | 허용 | - |
 
@@ -40,7 +40,7 @@ Jev 호출 없이 막고 `Write` / `Edit` / `Grep` / `Glob` 도구를 쓰라고 
 4. Choice 질문 하나로 의도를 판별합니다. 차단 대상 범주의 확률 합이 임계값(기본 0.6) 이상이면 `permissionDecision: "deny"` 와 대신 쓸 기능을 알려 주는 영어 안내 문구를 돌려줍니다. 같은 입력도 확률이 ±0.05~0.1 흔들리므로, 임계값 ±0.15 안이면 한 번 더 물어 평균을 냅니다.
 5. API 키가 없거나 Jev 호출이 실패하거나 훅이 12초 마감을 넘기면 작업을 막지 않고 통과시킵니다(fail-open).
 
-비용: Jev 로 가는 일반 명령은 입력 약 1,150 토큰, 긴 소스가 붙으면 최대 약 2,700 토큰이라 Jev 1.14 가격($0.042/백만 토큰) 기준 $0.00005~0.00011 입니다. 판별 기준 문구를 줄여 0.2.0 대비 명령당 약 35% 줄였고(테스트 케이스 평균 1,877 → 1,222 토큰), 실제 Claude Code 기록의 명령 약 8,000개로 재 보니 약 40% 는 0단계에서 끝나 Jev 를 부르지 않았습니다. 둘을 합치면 Jev 토큰은 이전의 약 39% 입니다. 훅 전체 지연은 Jev 를 부를 때 약 400~500ms 이고, 드문 경계 구간에서는 Jev 시간이 두 배가 됩니다.
+비용: Jev 로 가는 일반 명령은 입력 약 1,300 토큰, 긴 소스가 붙으면 최대 약 2,800 토큰이라 Jev 1.14 가격($0.042/백만 토큰) 기준 $0.00005~0.00012 입니다. 판별 기준 문구를 줄여 0.3.0 대비 명령당 약 35% 줄였고(일반 명령 1,978 → 1,276 토큰), 실제 Claude Code 기록의 명령 약 8,000개로 재 보니 약 40% 는 0단계에서 끝나 Jev 를 부르지 않았습니다. 둘을 합치면 Jev 토큰은 이전의 약 39% 입니다. 훅 전체 지연은 Jev 를 부를 때 약 400~500ms 이고, 드문 경계 구간에서는 Jev 시간이 두 배가 됩니다.
 
 ## TypeSafe 로 보내는 것
 
@@ -84,7 +84,7 @@ for i in 1 2 3; do curl -sf https://example.com && break; sleep 5; done # use-ri
 
 ```
 node --test test/unit.test.mjs   # 오프라인 87개: 토크나이저, 실행 코드 수집, 도구 규칙, Jev 생략, 비밀값 가리기, 정책, 훅 입출력 (스텁 서버, API 키 불필요)
-node test/cases.mjs              # 실제 Jev: 명령 73개(Jev 차단 38, 도구 규칙 차단 6, 허용 29)와 사용한 토큰
+node test/cases.mjs              # 실제 Jev: 명령 75개(Jev 차단 39, 도구 규칙 차단 6, 허용 30)와 사용한 토큰
 ```
 
 실제 Jev 테스트에는 레드팀 지적 사항이 들어 있습니다: 중립적인 이름의 스크립트에 숨은 루프, npm 스크립트, make 타깃, import, 긴 파일, 스케줄러처럼 도는 횟수 제한 루프, 짧은 재시도 루프, 붙어서 도는 서비스, 루프 코드를 다듬거나 쓰기만 하는 명령. 예제 파일은 `test/fixtures/` 에 있습니다.

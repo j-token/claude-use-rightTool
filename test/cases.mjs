@@ -49,6 +49,14 @@ export const CASES = [
   ["Bash", "for i in $(seq 1 100); do git pull; sleep 300; done", false, "loop"],
   ["Bash", "for i in {1..1440}; do curl -s localhost/status >> status.log; sleep 60; done", true, "loop"],
   ["PowerShell", "1..288 | ForEach-Object { Invoke-RestMethod http://localhost/status; Start-Sleep 300 }", false, "loop"],
+  // 종료 조건은 있지만 몇 시간짜리 작업을 감시하는 루프 (이슈 #1)
+  [
+    "Bash",
+    "cd runs/risk-smooth-20261004; start=$(grep -o '\"arm\": \"[^\"]*\"' status.json); until s=$(grep -o '\"status\": \"[^\"]*\"' status.json); a=$(grep -o '\"arm\": \"[^\"]*\"' status.json); age=$(( $(date +%s) - $(stat -c %Y b1-control/log.jsonl) )); [ \"$s\" != '\"status\": \"running\"' ] || [ \"$a\" != \"$start\" ] || [ $age -gt 600 ]; do sleep 60; done; cat status.json",
+    true,
+    "loop",
+    "arm 전환·실패·로그 정지까지 대기",
+  ],
   // 아주 긴 명령의 끝에 숨은 대기
   ["Bash", `${LONG_PAD}sleep 120 && cat build.log`, false, "loop"],
   // 붙어서 돌아가는 서비스와 대기 명령
@@ -70,6 +78,7 @@ export const CASES = [
 
   // 통과해야 하는 것
   ["Bash", "until grep -q 'Ready in' dev.log; do sleep 0.5; done", true, "allow", "Notify when dev server is ready"],
+  ["Bash", "until [ \"$(grep -c '\"update\"' train.jsonl)\" -ge 3 ]; do sleep 5; done; tail -n 3 train.jsonl", true, "allow", "첫 업데이트 3개가 기록될 때까지 대기"],
   ["Bash", "for f in src/*.ts; do wc -l \"$f\"; done", false, "allow"],
   ["Bash", "while read -r line; do echo \"$line\" | cut -d, -f1; done < data.csv", false, "allow"],
   ["Bash", "npm install watchpack", false, "allow"],

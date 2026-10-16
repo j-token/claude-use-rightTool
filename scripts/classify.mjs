@@ -46,8 +46,10 @@ export function parseThreshold(raw) {
 const CATEGORIES = {
   poll_until_condition: {
     instructions:
-      "Re-checks external state (HTTP endpoint, port, file, process, CI/deploy status) with waits between checks, and exits once the condition holds or an attempt cap is hit.",
+      "Re-checks external state (HTTP endpoint, port, file, process, CI/deploy status) with waits between checks, and exits once the condition holds or an attempt cap is hit. The expected wait is short, seconds to a few minutes.",
     examples: ["until curl -sf localhost:3000/health; do sleep 1; done", "while (-not (Test-Path out.json)) { Start-Sleep 2 }"],
+    not_this:
+      "Watching a long-running job (training, deployment, large build) that may take tens of minutes or hours, or a watchdog checking progress, failure, or stall, is repeat_forever even with an end condition.",
   },
   wait_for_completion: {
     instructions: "Sleeps or blocks to wait for another job, build, or process to finish before looking at its result.",
@@ -59,8 +61,12 @@ const CATEGORIES = {
   },
   repeat_forever: {
     instructions:
-      "Re-runs a check or job at an interval for a long time, like a scheduler or monitor: unbounded loops, and bounded loops whose iterations times interval span many minutes or more.",
-    examples: ["while true; do curl -s api/status; sleep 30; done", "for i in $(seq 1 100); do git pull; sleep 300; done"],
+      "Re-runs a check or job at an interval for a long time, like a scheduler or monitor: unbounded loops, bounded loops whose iterations times interval span many minutes or more, and until/while loops watching a long-running job for a state change, failure, or stall over tens of minutes or hours.",
+    examples: [
+      "while true; do curl -s api/status; sleep 30; done",
+      "for i in $(seq 1 100); do git pull; sleep 300; done",
+      "until [ \"$(jq -r .status run/status.json)\" != running ] || [ $(( $(date +%s) - $(stat -c %Y run/train.log) )) -gt 600 ]; do sleep 60; done",
+    ],
   },
   watch_mode_process: {
     instructions: "Starts a dev server, watch-mode compiler/test runner, or service that stays attached to the terminal.",
@@ -187,13 +193,14 @@ export async function judge(request, { apiKey, runInBackground, threshold }) {
 const GUIDANCE = {
   poll_until_condition: [
     "This command polls a status in a shell loop.",
-    "- If you only need one notification when the condition becomes true: run the same `until` loop with `run_in_background: true`. The harness notifies you when it exits, so you do not have to wait on it yourself.",
-    "- If you need an event for each change or progress step: use the `Monitor` tool (each stdout line becomes one notification).",
+    "- For a short wait (a few minutes at most) where you only need one notification when the condition becomes true: run the same `until` loop with `run_in_background: true`. The harness notifies you when it exits, so you do not have to wait on it yourself.",
+    "- To watch a long-running job (training, deployment, a large build) or to get an event for each change, progress step, or failure: use the `Monitor` tool (each stdout line becomes one notification). Do not move such a watch into a background `until` loop.",
   ],
   wait_for_completion: [
     "This command sleeps or blocks to wait for another job to finish.",
     "- If you started that job with `run_in_background: true`, you are notified automatically when it finishes. Do not wait with a fixed sleep.",
-    "- To wait for a specific condition (a log line, a file appearing, a port opening): run `until <condition>; do sleep 1; done` with `run_in_background: true`.",
+    "- To wait briefly (a few minutes at most) for a specific condition (a log line, a file appearing, a port opening): run `until <condition>; do sleep 1; done` with `run_in_background: true`.",
+    "- To watch a long-running job or several events: use the `Monitor` tool.",
   ],
   stream_follow: [
     "This command follows a log or output stream continuously (tail -f, Get-Content -Wait, watch, ...).",

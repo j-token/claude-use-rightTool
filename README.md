@@ -18,10 +18,10 @@ Filtering or saving another command's output (`git log \| head`, `npm test > out
 
 | Jev verdict | Foreground | `run_in_background: true` | Suggested feature |
 | --- | --- | --- | --- |
-| `poll_until_condition` (waits for external state, then exits) | Block | Allow (the officially recommended pattern) | `run_in_background` + `until`, `Monitor` |
+| `poll_until_condition` (short wait for external state, then exits) | Block | Allow (the officially recommended pattern) | `run_in_background` + `until` for a short wait, `Monitor` for a long-running job |
 | `wait_for_completion` (sleeps, then checks a result) | Block | Allow | `run_in_background` notification |
 | `stream_follow` (tail -f, Get-Content -Wait, watch) | Block | Block | `Monitor` |
-| `repeat_forever` (interval loop running for a long time, bounded or not) | Block | Block | `Monitor`, `/loop`, `CronCreate` |
+| `repeat_forever` (interval loop running for a long time, bounded or not, including an `until` loop that watches a job for tens of minutes or hours) | Block | Block | `Monitor`, `/loop`, `CronCreate` |
 | `watch_mode_process` (attached dev server, `--watch`) | Block | Allow | `run_in_background` + `Monitor` |
 | `finite_iteration`, `single_action` | Allow | Allow | - |
 
@@ -41,7 +41,7 @@ Filtering or saving another command's output (`git log \| head`, `npm test > out
 4. A single Choice question classifies what the command will do over time. If the combined probability of the blocked categories is at or above the threshold (default 0.6), the hook returns `permissionDecision: "deny"` with an English message telling Claude which feature to use instead. Within ±0.15 of the threshold, it asks Jev a second time and averages the two answers, because answers to identical input vary by about ±0.05–0.1.
 5. If the API key is missing, the Jev request fails, or the hook runs past its 12-second deadline, the command is allowed (fail-open) so your work is never stuck.
 
-Cost: about 1,150 input tokens per plain command sent to Jev and up to about 2,700 with long source code, so $0.00005–0.00011 at Jev 1.14 pricing ($0.042 per million tokens). Shorter category criteria cut about 35% per command compared with 0.2.0 (1,877 → 1,222 tokens on average over the test cases), and on about 8,000 commands from real Claude Code transcripts about 40% were settled in step 0 without calling Jev. Together, Jev token use is about 39% of what it was. When Jev is called the hook adds about 400–500 ms, and about twice the Jev time in the rare borderline cases.
+Cost: about 1,300 input tokens per plain command sent to Jev and up to about 2,800 with long source code, so $0.00005–0.00012 at Jev 1.14 pricing ($0.042 per million tokens). Shorter category criteria cut about 35% per command compared with 0.3.0 (1,978 → 1,276 tokens for a plain command), and on about 8,000 commands from real Claude Code transcripts about 40% were settled in step 0 without calling Jev. Together, Jev token use is about 39% of what it was. When Jev is called the hook adds about 400–500 ms, and about twice the Jev time in the rare borderline cases.
 
 Example message Claude receives:
 
@@ -93,7 +93,7 @@ The marker counts only as a real shell comment (not inside quotes, arguments, or
 
 ```
 node --test test/unit.test.mjs   # offline, 87 tests: tokenizer, source collection, tool rules, Jev skipping, redaction, policy, hook I/O (stub server, no API key)
-node test/cases.mjs              # live: 73 commands (38 blocked by Jev, 6 by tool rules, 29 allowed) and the tokens used
+node test/cases.mjs              # live: 75 commands (39 blocked by Jev, 6 by tool rules, 30 allowed) and the tokens used
 ```
 
 The live cases include the red-team findings: loops hidden in scripts with neutral names, npm scripts, make targets, imports, long files, bounded loops that act as schedulers, small retry loops, attached services, and commands that only format or write loop code. Fixtures live in `test/fixtures/`.

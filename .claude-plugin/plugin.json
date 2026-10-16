@@ -1,6 +1,6 @@
 {
   "name": "use-right-tool",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Blocks shell-based loops, polling, and monitoring (judged by TypeSafe Jev) and shell file writes, edits, and searches, and tells Claude to use Monitor, run_in_background, /loop, CronCreate, or Write/Edit/Grep/Glob instead.",
   "author": {
     "name": "leeheon"
