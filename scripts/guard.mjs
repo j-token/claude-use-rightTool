@@ -5,6 +5,7 @@
 import { appendFileSync } from "node:fs";
 import { buildRequest, denyReason, findBypass, judge, parseThreshold } from "./classify.mjs";
 import { redact } from "./redact.mjs";
+import { obviouslyFinite, toolMisuse, toolReason } from "./rules.mjs";
 import { looksLoopish } from "./signals.mjs";
 import { gatherSources } from "./sources.mjs";
 
@@ -50,14 +51,6 @@ async function main() {
   const { command, description, run_in_background: runInBackground } = input.tool_input ?? {};
   if (typeof command !== "string" || !command.trim()) return;
 
-  const apiKey = process.env.TYPESAFE_API_KEY;
-  if (!apiKey) {
-    process.stderr.write("[use-right-tool] TYPESAFE_API_KEY is not set; skipping the check.\n");
-    return;
-  }
-  const threshold = parseThreshold(process.env.USE_RIGHT_TOOL_THRESHOLD);
-  if (threshold.warning) process.stderr.write(`[use-right-tool] ${threshold.warning}\n`);
-
   const { comments, sources } = gatherSources({ toolName, command, cwd: input.cwd });
   const logBase = { toolName, command: redact(command.slice(0, LOG_COMMAND_CHARS)), runInBackground, sources: sources.map((s) => `${s.path} (${s.role})`) };
 
@@ -67,10 +60,32 @@ async function main() {
     return;
   }
 
+  // 전용 도구로 할 일(파일 쓰기·수정·보기·검색)은 Jev 없이 막는다.
+  const shell = toolName === "PowerShell" ? "powershell" : "bash";
+  const misuse = toolMisuse(command, shell);
+  if (misuse) {
+    log({ ...logBase, rule: misuse.kind });
+    deny(toolReason(misuse));
+    return;
+  }
+  // 루프나 대기를 만들 수 없는 단순 명령은 Jev 에 묻지 않는다.
+  if (obviouslyFinite(command, shell, sources)) {
+    log({ ...logBase, skipped: "obviously finite" });
+    return;
+  }
+
   if (usePrefilter) {
     const texts = [command, ...sources.flatMap((s) => [s.code, s.code_head, s.code_tail, ...(s.loop_related_lines ?? [])])];
     if (!texts.some((t) => t && looksLoopish(t))) return;
   }
+
+  const apiKey = process.env.TYPESAFE_API_KEY;
+  if (!apiKey) {
+    process.stderr.write("[use-right-tool] TYPESAFE_API_KEY is not set; skipping the loop check.\n");
+    return;
+  }
+  const threshold = parseThreshold(process.env.USE_RIGHT_TOOL_THRESHOLD);
+  if (threshold.warning) process.stderr.write(`[use-right-tool] ${threshold.warning}\n`);
 
   let result;
   try {
@@ -82,8 +97,8 @@ async function main() {
     return;
   }
 
-  const { model, answer, requeried, verdict } = result;
-  log({ ...logBase, model, requeried, choice: answer.choice, probabilities: answer.probabilities, ...verdict });
+  const { model, answer, requeried, inputTokens, verdict } = result;
+  log({ ...logBase, model, requeried, inputTokens, choice: answer.choice, probabilities: answer.probabilities, ...verdict });
 
   if (verdict.deny) deny(denyReason(verdict));
 }
