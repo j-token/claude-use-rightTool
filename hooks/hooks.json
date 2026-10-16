@@ -1,5 +1,5 @@
 {
-  "description": "Block shell loops/polling/monitoring and redirect to the dedicated Claude Code tools",
+  "description": "Block shell loops/polling/monitoring and shell file writes/edits/searches, and redirect to the dedicated Claude Code tools",
   "hooks": {
     "PreToolUse": [
       {

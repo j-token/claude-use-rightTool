@@ -12,6 +12,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { averageAnswers, buildRequest, decide, denyReason, findBypass, parseThreshold } from "../scripts/classify.mjs";
 import { redact } from "../scripts/redact.mjs";
+import { obviouslyFinite, toolMisuse } from "../scripts/rules.mjs";
 import { tokenize } from "../scripts/shell.mjs";
 import { gatherSources } from "../scripts/sources.mjs";
 
@@ -246,6 +247,162 @@ async function runGuard(payload, { answers = [], env = {}, errorBody = null } = 
 
 const bash = (command, extra = {}) => ({ tool_name: "Bash", cwd: fixtures, tool_input: { command, ...extra } });
 
+describe("rules: dedicated tools instead of the shell", () => {
+  const kind = (command, shell = "bash") => toolMisuse(command, shell)?.kind ?? null;
+
+  it("blocks writing file contents from the shell", () => {
+    assert.equal(kind("cat > a.py <<'EOF'\nprint(1)\nEOF"), "write");
+    assert.equal(kind("cat <<EOF > notes.md\nhi\nEOF"), "write");
+    assert.equal(kind("mkdir -p src && cat >> src/a.ts << 'X'\nexport {}\nX"), "write");
+    assert.equal(kind("echo 'node_modules' >> .gitignore"), "write");
+    assert.equal(kind("printf '%s\\n' a b > list.txt"), "write");
+    assert.equal(kind("tee config.json <<EOF\n{}\nEOF"), "write");
+    assert.equal(kind("echo '{}' | tee config.json"), "write");
+    assert.equal(kind("cat <<< 'x' > f.txt"), "write");
+    assert.equal(kind("Set-Content -Path a.ps1 -Value 'x'", "powershell"), "write");
+    assert.equal(kind("'hello' > a.txt", "powershell"), "write");
+    assert.equal(kind("@'\nline\n'@ | Out-File a.txt", "powershell"), "write");
+    assert.equal(kind("[IO.File]::WriteAllText('a.txt', 'x')", "powershell"), "write");
+    assert.equal(kind("New-Item a.txt -Value 'x'", "powershell"), "write");
+  });
+
+  it("blocks in-place edits and inline scripts that write files", () => {
+    assert.equal(kind("sed -i 's/a/b/g' src/x.c"), "edit");
+    assert.equal(kind("sed -i.bak -e 's/a/b/' x"), "edit");
+    assert.equal(kind("perl -pi -e 's/a/b/' x"), "edit");
+    // 예시 사진의 형태: heredoc 으로 넘긴 파이썬이 파일을 고쳐 쓴다
+    const screenshot = `S=/tmp/s; python - "$S/obf.py" <<'EOF'\nimport sys\np=sys.argv[1]; s=open(p,encoding='utf-8').read()\ns=s.replace('a','b')\nopen(p,'w',encoding='utf-8').write(s)\nEOF\ngrep -n x $S/obf.py`;
+    assert.equal(kind(screenshot), "edit");
+    assert.equal(kind(`python -c "from pathlib import Path; Path('a').write_text('x')"`), "edit");
+    assert.equal(kind(`node -e "require('fs').writeFileSync('a.json', '{}')"`), "edit");
+    assert.equal(kind("cat <<'EOF' | python3\nopen('x','a').write('y')\nEOF"), "edit");
+    assert.equal(kind(`bash -c "echo x > a.txt"`), "write");
+  });
+
+  it("allows viewing files", () => {
+    for (const command of ["cat src/a.py", "head -50 README.md", "sed -n '130,150p' src/monmove.c", "cd src && cat a.py && echo --- && cat b.py", "cat a.py | grep def"]) {
+      assert.equal(kind(command), null, command);
+    }
+    assert.equal(kind("Get-Content .\\a.txt -TotalCount 20", "powershell"), null);
+  });
+
+  it("blocks commands that only search files", () => {
+    assert.equal(kind("grep -rn 'mapping =' src"), "search");
+    assert.equal(kind("rg -c Elbereth src | head -3"), "search");
+    assert.equal(kind("find . -name '*.py'"), "search");
+    assert.equal(kind("cat a.py && grep -rn x src"), "search");
+    assert.equal(kind("ls -R src"), "search");
+    assert.equal(kind("Get-ChildItem -Recurse -Filter *.cs", "powershell"), "search");
+    assert.equal(kind("Select-String -Path *.ps1 -Pattern Sleep", "powershell"), "search");
+  });
+
+  it("allows output redirects, filters of other commands, and runtime work", () => {
+    for (const command of [
+      "npm test > out.log 2>&1",
+      "git diff > change.patch",
+      "git log --oneline | head -20",
+      "npm test 2>&1 | tail -30",
+      "git commit -m \"$(cat <<'EOF'\nfix: x\nEOF\n)\"",
+      "gh pr create --body-file - <<'EOF'\nbody\nEOF",
+      "python - <<'EOF'\nprint(sum(range(10)))\nEOF",
+      "python report.py > out.csv",
+      "ls",
+      "ls -r",
+      "tail -f app.log",
+      "cat a.txt > b.txt",
+      "find . -name '*.tmp' -delete",
+      "wc -l src/*.py",
+      "echo done",
+      "sleep 1 2>/dev/null",
+      "ps aux | grep node",
+      "perl -Mstrict -e 'print 1'",
+      "perl -Ilib t/basic.t",
+      "env | grep -i proxy",
+      "echo $PATH | grep node",
+      "ls node_modules/.bin | grep jest",
+      "echo $! > /tmp/server.pid",
+      "sudo tee /etc/hosts <<EOF\n127.0.0.1 x\nEOF",
+      "npm run build; bash -c 'grep -r foo dist'",
+    ]) {
+      assert.equal(kind(command), null, command);
+    }
+    assert.equal(kind("npm test | Out-File log.txt", "powershell"), null);
+    assert.equal(kind("Get-Content a.log -Wait", "powershell"), null);
+  });
+});
+
+describe("rules: skipping Jev", () => {
+  const finite = (command, shell = "bash", sources = []) => obviouslyFinite(command, shell, sources);
+
+  it("skips commands that cannot loop or wait", () => {
+    for (const command of ["git status", "git add -A && git commit -m \"$(cat <<'EOF'\nmsg\nEOF\n)\"", "ls -la && pwd", "mkdir -p a/b && cp x a/b", "FOO=1 git log | head", "grep -c x a | sort", "git log -p -3 | head -50", "git -C sub status", "git commit -am wip", "git grep -e foo"]) {
+      assert.ok(finite(command), command);
+    }
+    assert.ok(finite("Get-ChildItem | Select-Object -First 5", "powershell"));
+  });
+
+  it("asks Jev about anything that can run code, loop, wait, or follow", () => {
+    for (const command of [
+      "sleep 60",
+      "tail -f a.log",
+      "tail -F a.log | grep x",
+      "find . -exec sleep 1 \\;",
+      "npm test",
+      "python x.py",
+      "timeout 60 git fetch",
+      "while true; do git status; done",
+      "for f in *; do ls $f; done",
+      "git status && $(sleep 9)",
+      "echo $(curl x)",
+      "watch git status",
+      "ping -n 61 127.0.0.1",
+      "nohup git gc &",
+      "awk 'BEGIN { while (1) {} }'",
+      "awk -f prog.awk",
+      "sed '1e sleep 1000' f.txt",
+      "jq -n 'repeat(1)'",
+      "free -s 1",
+      "cat /dev/urandom",
+      "rg --pre 'sleep 1000' foo .",
+      "sort --compress-program='sleep 1000' big.txt",
+      "fd -Hx sleep 1000",
+      "fd --exec=sleep 1000",
+      "git status; tail -fn 50 app.log",
+      "git status && tail -100f app.log",
+      "tail --follow=name app.log",
+      "cat <(watch ls)",
+      // git 이 임의 명령을 실행하거나 입력·에디터를 기다리는 경우
+      "git -c alias.w=\"!while true; do sleep 5; done\" w",
+      "git bisect run sh -c 'sleep 1000'",
+      "git rebase -x 'sleep 1000' HEAD~3",
+      "git submodule foreach 'while true; do sleep 5; done'",
+      "git -c core.fsmonitor='sleep 1000' status",
+      "git rebase -i HEAD~3",
+      "git commit",
+      "git commit --amend",
+      "git add -p",
+      "git daemon",
+    ]) {
+      assert.equal(finite(command), false, command);
+    }
+    // PowerShell 루프는 키워드만 남은 세그먼트가 생긴다
+    for (const command of [
+      "while (Test-Path build.lock) { git status }",
+      "while (!(Test-Path out.json)) { }",
+      "do { Get-Date } until (Test-Path done.txt)",
+      "& { while (Test-Path .) { } }",
+      "git status; Get-Content app.log -Wait:$true",
+      "Get-Content app.log -Wai",
+      "Get-Content CON",
+    ]) {
+      assert.equal(finite(command, "powershell"), false, command);
+    }
+    assert.equal(finite("Get-Content a.log -Wait", "powershell"), false);
+    assert.equal(finite("Get-ChildItem | ForEach-Object { Start-Sleep 1 }", "powershell"), false);
+    assert.equal(finite("git status", "bash", [{ path: "x" }]), false);
+  });
+});
+
 describe("guard.mjs", () => {
   it("denies when Jev says it is a wait", async () => {
     const r = await runGuard(bash("sleep 60 && cat log"), { answers: [{ wait_for_completion: 1 }] });
@@ -255,9 +412,27 @@ describe("guard.mjs", () => {
   });
 
   it("allows when Jev says it is a single action", async () => {
-    const r = await runGuard(bash("git status"));
+    const r = await runGuard(bash("npm install"));
     assert.equal(r.denied, false);
     assert.equal(r.requests.length, 1);
+  });
+
+  it("does not call Jev for an obviously finite command", async () => {
+    const r = await runGuard(bash("git status && git diff --stat | tail -5"), { answers: [{ stream_follow: 1 }] });
+    assert.equal(r.denied, false);
+    assert.equal(r.requests.length, 0);
+  });
+
+  it("denies a heredoc file write without calling Jev or needing an API key", async () => {
+    const r = await runGuard(bash("cat > a.py <<'EOF'\nprint(1)\nEOF"), { env: { TYPESAFE_API_KEY: "" } });
+    assert.ok(r.denied);
+    assert.equal(r.requests.length, 0);
+    assert.match(JSON.parse(r.stdout).hookSpecificOutput.permissionDecisionReason, /`Write` tool/);
+  });
+
+  it("lets the bypass comment through a tool rule", async () => {
+    const r = await runGuard(bash("sed -i 's/a/b/' x.txt # use-right-tool:allow: binary-safe rewrite"));
+    assert.equal(r.denied, false);
   });
 
   it("asks twice and averages near the threshold", async () => {
@@ -458,7 +633,8 @@ describe("second review", () => {
 
   it("finishes quickly on megabytes of PEM markers", async () => {
     const start = Date.now();
-    const r = await runGuard(bash(`echo "${"-----BEGIN PRIVATE KEY-----".repeat(100000)}"`));
+    // echo 는 이제 Jev 를 건너뛰므로 같은 길이의 다른 명령을 쓴다(잘리는 위치가 같아야 한다).
+    const r = await runGuard(bash(`curl "${"-----BEGIN PRIVATE KEY-----".repeat(100000)}"`));
     assert.equal(r.code, 0);
     assert.ok(Date.now() - start < 5000, `took ${Date.now() - start} ms`);
     assert.equal(r.requests.length, 1);

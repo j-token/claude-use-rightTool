@@ -5,6 +5,16 @@
 A Claude Code plugin that stops Claude from hand-rolling loops, polling, and monitoring in Bash or PowerShell
 (`while true; sleep`, `tail -f`, `sleep 60 && cat log`, ...). A PreToolUse hook blocks those commands and tells Claude
 which built-in feature to use instead. The judgment is made by TypeSafe's **Jev** model.
+Commands that write, edit, or search files from the shell (`cat > x.py <<EOF`, `sed -i`, `python - <<EOF` that rewrites a file,
+`grep -rn`) are also blocked, without calling Jev, and Claude is pointed to the `Write`, `Edit`, `Grep`, and `Glob` tools. Viewing files (`cat`, `head`, `sed -n`) is allowed.
+
+| Tool rule (no Jev call) | Examples | Suggested tool |
+| --- | --- | --- |
+| `write` | `cat > f <<EOF`, `echo ... > f`, `printf > f`, `tee f <<EOF`, `Set-Content`, `"text" > f`, `[IO.File]::WriteAllText` | `Write`, `Edit` |
+| `edit` | `sed -i`, `perl -pi`, inline scripts that write files (`python - <<EOF ... open(p,'w')`, `node -e "fs.writeFileSync(...)"`) | `Edit`, `Write` |
+| `search` | the whole command only searches: `grep -rn x src`, `rg x`, `find . -name`, `Select-String`, `ls -R`, `Get-ChildItem -Recurse` | `Grep`, `Glob` |
+
+Filtering or saving another command's output (`git log \| head`, `npm test > out.log`, `git commit -m "$(cat <<'EOF' ...)"`) is not blocked.
 
 | Jev verdict | Foreground | `run_in_background: true` | Suggested feature |
 | --- | --- | --- | --- |
@@ -17,7 +27,10 @@ which built-in feature to use instead. The judgment is made by TypeSafe's **Jev*
 
 ## How it works
 
-1. **Every** Bash and PowerShell command is checked. A keyword filter would miss workarounds such as `node -e "setTimeout(...)"`, `ping -n 61 127.0.0.1` (a Windows sleep trick), or a `sleep` hidden inside a script file.
+0. The hook first decides from the shape of the command alone (no Jev call, works without an API key).
+   - Commands that match a tool rule above are blocked right away.
+   - Commands made only of programs that cannot loop or wait (`git` subcommands that do not prompt or run other commands, `ls`, `mkdir`, `cp`, `rm`, `wc`, `Get-ChildItem`, ..., excluding forms such as `tail -f`, `find -exec`, `timeout`, `nohup`, and PowerShell loops) are allowed without asking Jev. Commands that run a script always go to Jev.
+1. **Every** other Bash and PowerShell command is checked by Jev. A keyword filter would miss workarounds such as `node -e "setTimeout(...)"`, `ping -n 61 127.0.0.1` (a Windows sleep trick), or a `sleep` hidden inside a script file.
 2. The hook collects the code the command will **actually execute**, so that Jev judges code instead of names:
    - script files passed to an interpreter (`python`, `node`, `tsx`, `deno`, `bun`, `bash`, `pwsh -File`, `php`, `ruby`, `perl`, `lua`, `go run`, `cmd /c`, ...), scripts run directly (`./runner`, `.\build.ps1`), and `source` / `.`
    - `npm` / `pnpm` / `yarn` / `bun` scripts from `package.json`, and `make` / `just` recipes (with one level of prerequisites)
@@ -28,7 +41,7 @@ which built-in feature to use instead. The judgment is made by TypeSafe's **Jev*
 4. A single Choice question classifies what the command will do over time. If the combined probability of the blocked categories is at or above the threshold (default 0.6), the hook returns `permissionDecision: "deny"` with an English message telling Claude which feature to use instead. Within ±0.15 of the threshold, it asks Jev a second time and averages the two answers, because answers to identical input vary by about ±0.05–0.1.
 5. If the API key is missing, the Jev request fails, or the hook runs past its 12-second deadline, the command is allowed (fail-open) so your work is never stuck.
 
-Cost: about 1,800 input tokens per plain command and up to about 3,400 with long source code, so $0.00008–0.00014 at Jev 1.13 pricing ($0.042 per million tokens). The whole hook adds about 400–500 ms, and about twice the Jev time in the rare borderline cases.
+Cost: about 1,300 input tokens per plain command sent to Jev and up to about 2,800 with long source code, so $0.00005–0.00012 at Jev 1.14 pricing ($0.042 per million tokens). Shorter category criteria cut about 35% per command compared with 0.3.0 (1,978 → 1,276 tokens for a plain command), and on about 8,000 commands from real Claude Code transcripts about 40% were settled in step 0 without calling Jev. Together, Jev token use is about 39% of what it was. When Jev is called the hook adds about 400–500 ms, and about twice the Jev time in the rare borderline cases.
 
 Example message Claude receives:
 
@@ -61,8 +74,8 @@ Requires Node.js 18 or later and the `TYPESAFE_API_KEY` environment variable.
 | --- | --- | --- |
 | `TYPESAFE_API_KEY` | (required) | TypeSafe API key |
 | `USE_RIGHT_TOOL_THRESHOLD` | `0.6` | Probability threshold for blocking, in (0, 1]. Invalid values fall back to 0.6 with a warning. |
-| `USE_RIGHT_TOOL_MODEL` | `jev-1.13.0` | The threshold and criteria were tuned on this version. Rerun `node test/cases.mjs` before switching (for example to `jev-latest`). |
-| `USE_RIGHT_TOOL_LOG` | (unset) | When set, verdicts and bypasses are appended to this file as JSONL (with secrets redacted) |
+| `USE_RIGHT_TOOL_MODEL` | `jev-1.14.0` | The threshold and criteria were tuned on this version. On the same cases 1.14 kept a wider margin than 1.13 (minimum 0.25 vs 0.13), and with the shorter criteria 1.13 misjudged `nohup ... &`. Rerun `node test/cases.mjs` before switching. |
+| `USE_RIGHT_TOOL_LOG` | (unset) | When set, verdicts, input tokens used (`inputTokens`), tool rules (`rule`), skipped Jev calls (`skipped`), and bypasses are appended to this file as JSONL (with secrets redacted) |
 | `USE_RIGHT_TOOL_PREFILTER` | (unset) | Set to `1` to call Jev only when the command or the code it runs contains a hint such as `while`, `sleep`, `setTimeout`, `tail -f`, `-Wait`, or `--watch`. Cheaper and faster, but obfuscated workarounds can slip through. |
 | `USE_RIGHT_TOOL_ENDPOINT` | TypeSafe API | Override the API URL (used by the offline tests) |
 
@@ -74,16 +87,16 @@ If a command is blocked by mistake, re-run it with a trailing comment that gives
 for i in 1 2 3; do curl -sf https://example.com && break; sleep 5; done # use-right-tool:allow: three fixed retries
 ```
 
-The marker counts only as a real shell comment (not inside quotes, arguments, or URLs) and only with a reason after the colon. Every bypass is logged when `USE_RIGHT_TOOL_LOG` is set. The block message mentions the bypass only when the verdict is uncertain (p < 0.9).
+The marker counts only as a real shell comment (not inside quotes, arguments, or URLs) and only with a reason after the colon. It works for the tool rules too (for example when a binary file has to be patched). Every bypass is logged when `USE_RIGHT_TOOL_LOG` is set. A Jev block message mentions the bypass only when the verdict is uncertain (p < 0.9); a tool-rule block message always mentions it.
 
 ## Testing
 
 ```
-node --test test/unit.test.mjs   # offline, 78 tests: tokenizer, source collection, redaction, policy, hook I/O (stub server, no API key)
-node test/cases.mjs              # live: 58 commands (31 to block, 27 to allow) through the real Jev model
+node --test test/unit.test.mjs   # offline, 87 tests: tokenizer, source collection, tool rules, Jev skipping, redaction, policy, hook I/O (stub server, no API key)
+node test/cases.mjs              # live: 75 commands (39 blocked by Jev, 6 by tool rules, 30 allowed) and the tokens used
 ```
 
-The live cases include the red-team findings: loops hidden in scripts with neutral names, npm scripts, make targets, imports, long files, bounded loops that act as schedulers, small retry loops, and commands that only view or write loop code. Fixtures live in `test/fixtures/`.
+The live cases include the red-team findings: loops hidden in scripts with neutral names, npm scripts, make targets, imports, long files, bounded loops that act as schedulers, small retry loops, attached services, and commands that only format or write loop code. Fixtures live in `test/fixtures/`.
 
 ## Limitations
 
@@ -91,4 +104,5 @@ The live cases include the red-team findings: loops hidden in scripts with neutr
 - The tokenizer is an approximation, not a full shell parser. Scripts inside function definitions (`f() { python x.py; }`), scriptblocks assigned to a variable (`$s = { python x.py }`), or branches that cannot run (`false && python x.py`) are treated as if they run, so their code is read and sent.
 - The 12-second deadline cannot interrupt synchronous file reads. Network paths are skipped and reads are bounded, so this should only matter on an unusually slow local disk.
 - Some waits are a judgment call and are blocked in the foreground, for example `kubectl wait`, `kubectl rollout status`, and `sleep 2 && curl ...`. Use `run_in_background: true` or the bypass comment.
+- The tool rules are approximate too. One write inside a chain blocks the whole chain, and writes through computed paths or `eval` are missed. The search rule applies only when the whole command is viewing or searching files (plus neutral commands such as `cd`, `ls`, and `echo`); mixed with other work, as in `npm test && grep -rn x src`, it is allowed.
 - The plugin is a workflow guide for Claude, not a security boundary. It fails open, and the bypass is available to Claude.

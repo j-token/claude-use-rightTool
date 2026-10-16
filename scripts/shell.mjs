@@ -36,6 +36,8 @@ function matchBalanced(text, open, ps) {
  * PowerShell 에서 따옴표로 시작한 첫 단어는 실행이 아니라 문자열 값이고,
  * bash 의 ( ... ) 서브셸 안에서 cd 해도 바깥 디렉터리는 바뀌지 않기 때문이다.
  * `substitutions` 는 $(...) 와 bash `...` 안의 명령이다. 그 안에서도 코드가 실행된다.
+ * 세그먼트에는 쓰기 리다이렉트 대상(`outputs`), heredoc 본문(`heredocs`), here-string(`herestring`),
+ * 앞 세그먼트의 출력을 파이프로 받는지(`piped`)도 붙인다. 파일 쓰기·보기 명령을 가려낼 때 쓴다.
  * @returns {{ segments: string[][], comments: string[], substitutions: string[] }}
  */
 export function tokenize(command, shell) {
@@ -48,20 +50,27 @@ export function tokenize(command, shell) {
   let seg = [];
   let word = null;
   let wordQuoted = false;
-  let dropNextWord = false;
+  // 다음 단어를 명령 단어 대신 담을 곳: null(일반), "drop", "output", "herestring"
+  let nextWordTo = null;
+  let pipeNext = false;
   let parenDepth = 0;
   let i = 0;
 
+  const startSeg = () => {
+    seg.firstQuoted = wordQuoted;
+    seg.depth = parenDepth;
+    if (pipeNext) seg.piped = true;
+    pipeNext = false;
+  };
   const endWord = () => {
     if (word === null) return;
-    if (dropNextWord) dropNextWord = false;
-    else {
-      if (!seg.length) {
-        seg.firstQuoted = wordQuoted;
-        seg.depth = parenDepth;
-      }
+    if (nextWordTo === "output") (seg.outputs ??= []).push(word);
+    else if (nextWordTo === "herestring") seg.herestring = word;
+    else if (nextWordTo !== "drop") {
+      if (!seg.length) startSeg();
       seg.push(word);
     }
+    nextWordTo = null;
     word = null;
     wordQuoted = false;
   };
@@ -81,10 +90,11 @@ export function tokenize(command, shell) {
     return end;
   };
 
-  // heredoc 본문은 데이터이므로 단어로 나누지 않고 건너뛴다.
+  // heredoc 본문은 데이터이므로 단어로 나누지 않고, 그 heredoc 을 연 세그먼트에 본문으로 붙인다.
   const skipHeredocs = (start) => {
     let pos = start;
-    for (const { delim, strip } of pendingHeredocs) {
+    for (const { delim, strip, owner } of pendingHeredocs) {
+      const body = [];
       while (pos < n) {
         const nl = command.indexOf("\n", pos);
         const end = nl < 0 ? n : nl;
@@ -92,7 +102,9 @@ export function tokenize(command, shell) {
         if (strip) line = line.replace(/^\t+/, "");
         pos = end + 1;
         if (line === delim) break;
+        body.push(line);
       }
+      (owner.heredocs ??= []).push(body.join("\n"));
     }
     pendingHeredocs.length = 0;
     return Math.min(pos, n);
@@ -211,6 +223,7 @@ export function tokenize(command, shell) {
     }
     if (c === "|") {
       endSeg();
+      if (next !== "|") pipeNext = true;
       i += next === "|" ? 2 : 1;
       continue;
     }
@@ -221,12 +234,11 @@ export function tokenize(command, shell) {
       } else if (!ps && next === ">") {
         endWord();
         i += command[i + 2] === ">" ? 3 : 2;
-        dropNextWord = true;
+        nextWordTo = "output";
       } else if (ps && word === null && !seg.length) {
         // PowerShell 호출 연산자 & 는 세그먼트 맨 앞에만 온다.
+        startSeg();
         seg.push("&");
-        seg.firstQuoted = false;
-        seg.depth = parenDepth;
         i++;
       } else {
         // 명령 뒤의 & 는 백그라운드 실행이다. 그 안의 cd 는 현재 셸에 영향을 주지 않는다.
@@ -247,7 +259,7 @@ export function tokenize(command, shell) {
       endWord();
       if (command[i + 2] === "<") {
         i += 3;
-        dropNextWord = true;
+        nextWordTo = "herestring";
         continue;
       }
       let j = i + 2;
@@ -259,7 +271,7 @@ export function tokenize(command, shell) {
         if (!`'"\\`.includes(command[j])) delim += command[j];
         j++;
       }
-      pendingHeredocs.push({ delim, strip });
+      pendingHeredocs.push({ delim, strip, owner: seg });
       i = j;
       continue;
     }
@@ -273,7 +285,7 @@ export function tokenize(command, shell) {
         while (i < n && /[\d-]/.test(command[i])) i++;
         continue;
       }
-      dropNextWord = true;
+      nextWordTo = c === ">" ? "output" : "drop";
       continue;
     }
     append(c);

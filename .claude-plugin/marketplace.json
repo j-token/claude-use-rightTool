@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "use-right-tool",
-      "description": "Blocks shell-based loops/polling/monitoring and points Claude to Monitor, run_in_background, /loop, or CronCreate. Judged by Jev.",
+      "description": "Blocks shell-based loops/polling/monitoring (judged by Jev) and shell file writes/edits/searches, and points Claude to the dedicated tools.",
       "source": "./"
     }
   ]
