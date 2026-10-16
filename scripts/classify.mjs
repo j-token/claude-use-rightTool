@@ -39,91 +39,52 @@ export function parseThreshold(raw) {
   };
 }
 
+// 요청마다 그대로 나가는 고정 비용이라 짧게 유지한다(입력 토큰만 과금된다).
+// 예시를 줄일 때는 test/cases.mjs 로 마진을 확인한다. 재시도 예시를 빼면 재시도 루프의 마진이 크게 줄었다.
+// 루프 코드를 파일에 쓰기만 하는 명령은 rules.mjs 가 Jev 전에 처리하므로 여기서 예시로 들지 않는다.
 const CATEGORIES = {
   poll_until_condition: {
     instructions:
-      "Waits for some external state to change: repeatedly re-checks a status (HTTP endpoint, port, file existence, process, CI or deploy status, query result) with waits between checks, and exits once the condition is met or an attempt cap is reached. The repetition may come from while/until/for loops or from tools that repeat a command, such as seq | xargs, find -exec, or recursion.",
-    examples: [
-      "until curl -sf localhost:3000/health; do sleep 1; done",
-      "while (-not (Test-Path out.json)) { Start-Sleep 2 }",
-      "for i in $(seq 1 60); do gh run view 123 --json status | grep -q completed && break; sleep 10; done",
-      "seq 30 | xargs -I{} sh -c 'test -f out.json && exit 255; sleep 2'",
-    ],
-    not_this: "Retrying the same action a few times because it failed transiently (a flaky install or network request) is finite_iteration.",
+      "Re-checks external state (HTTP endpoint, port, file, process, CI/deploy status) with waits between checks, and exits once the condition holds or an attempt cap is hit.",
+    examples: ["until curl -sf localhost:3000/health; do sleep 1; done", "while (-not (Test-Path out.json)) { Start-Sleep 2 }"],
   },
   wait_for_completion: {
-    instructions:
-      "Sleeps a fixed amount of time or blocks in order to wait for some other job, build, download, or process to finish before looking at its result.",
-    examples: ["sleep 120 && cat build.log", "Start-Sleep -Seconds 30; Get-Content out.log", "wait $PID", "Wait-Process -Id 4242"],
+    instructions: "Sleeps or blocks to wait for another job, build, or process to finish before looking at its result.",
+    examples: ["sleep 120 && cat build.log", "Wait-Process -Id 4242"],
   },
   stream_follow: {
-    instructions: "Continuously follows a file or output stream and prints new content as it appears, never finishing on its own.",
-    examples: [
-      "tail -f app.log",
-      "Get-Content server.log -Wait -Tail 20",
-      "journalctl -fu nginx",
-      "docker logs -f api",
-      "kubectl get pods -w",
-      "watch -n 5 kubectl get pods",
-      "ping -t 8.8.8.8",
-    ],
+    instructions: "Continuously follows a file or output stream, never finishing on its own.",
+    examples: ["tail -f app.log", "Get-Content server.log -Wait", "kubectl get pods -w", "watch -n 5 kubectl get pods"],
   },
   repeat_forever: {
     instructions:
-      "Keeps re-running a check or a job at an interval for a long time, acting as a scheduler, cron, or ongoing monitor. This includes loops with no end condition and loops with a numeric bound whose total running time (iterations times interval) spans many minutes or hours.",
-    examples: [
-      "while true; do curl -s api/status; sleep 30; done",
-      "while ($true) { git pull; Start-Sleep 300 }",
-      "for i in $(seq 1 100); do git pull; sleep 300; done",
-      "for i in {1..1440}; do curl -s api/status >> status.log; sleep 60; done",
-      "1..288 | ForEach-Object { Invoke-RestMethod $url; Start-Sleep 300 }",
-    ],
+      "Re-runs a check or job at an interval for a long time, like a scheduler or monitor: unbounded loops, and bounded loops whose iterations times interval span many minutes or more.",
+    examples: ["while true; do curl -s api/status; sleep 30; done", "for i in $(seq 1 100); do git pull; sleep 300; done"],
   },
   watch_mode_process: {
-    instructions:
-      "Starts a dev server, a watch-mode compiler or test runner, or another service process that stays attached to the terminal and keeps running to react to changes.",
-    examples: ["npm run dev", "tsc --watch", "vitest --watch", "nodemon server.js", "python -m http.server"],
-    not_this:
-      "Starting a service detached so that the command itself returns right away (docker compose up -d, nohup ... &, Start-Process, pm2 start) is single_action.",
+    instructions: "Starts a dev server, watch-mode compiler/test runner, or service that stays attached to the terminal.",
+    examples: ["npm run dev", "tsc --watch", "python -m http.server"],
+    not_this: "Starting a service detached (docker compose up -d, nohup ... &) is single_action.",
   },
   finite_iteration: {
     instructions:
-      "A loop over a finite, already-known set of items (files, lines, list entries, a short numeric range), or a small fixed number (up to about five) of retries of the same action after a transient failure. It finishes quickly on its own and does not wait for anything external to change.",
+      "Loops over a known finite set of items, or retries a failed action a few times (up to about five); finishes quickly without waiting for external change.",
     examples: [
       "for f in *.png; do convert \"$f\" \"${f%.png}.jpg\"; done",
-      "Get-ChildItem *.log | ForEach-Object { Remove-Item $_ }",
-      "while read -r line; do echo \"$line\"; done < list.txt",
       "for i in 1 2 3; do npm ci && break; sleep 2; done",
       "for i in 1 2 3; do curl -sf https://registry.npmjs.org/ && break; sleep 5; done",
       "foreach ($i in 1..3) { try { Invoke-WebRequest $url; break } catch { Start-Sleep 5 } }",
     ],
-    not_this: "A loop that runs a job at intervals for many minutes or hours is repeat_forever even when its count is bounded.",
   },
   single_action: {
     instructions:
-      "An ordinary command that does its work once and exits. It does not loop, poll, wait for something else, or watch for changes. Loop code that the command only displays, creates, writes into a file, formats, lints, copies, or commits is not executed, so such commands are single_action. Words like sleep or watch may also appear only as names, arguments, or text.",
-    examples: [
-      "git status",
-      "npm test",
-      "grep -rn \"sleep\" src/",
-      "npm install watch",
-      "docker compose up -d",
-      "cat poll.sh",
-      "cat > monitor.sh <<'EOF'\nwhile true; do check; sleep 5; done\nEOF",
-      "Set-Content watch.ps1 -Value 'while ($true) { Start-Sleep 5 }'",
-      "git commit -m \"add polling loop\"",
-    ],
+      "Does its work once and exits without looping or waiting. Loop code that is only displayed, written to a file, formatted, or committed is not executed; sleep or watch may appear only as names or text.",
+    examples: ["git status", "grep -rn \"sleep\" src/", "docker compose up -d", "git commit -m \"add polling loop\""],
   },
 };
 
-const CONTEXT = [
-  "An AI coding agent is about to run `command` in a `shell` terminal.",
-  "`agent_description`, when present, is the agent's own short note about what the command is for.",
-  "A very long command is given as `command_head`, `command_tail` and `command_loop_related_lines` instead of `command`.",
-  "`sources`, when present, lists code that the command will actually execute: script files it runs, package.json scripts or make/just recipes it invokes, and local modules those scripts import.",
-  "Each source has a `role`. Long code is given as `code_head`, `code_tail` and `loop_related_lines`; a source with a `note` could not be read.",
-  "Judge by what the executed code does, not by file, script, or target names.",
-].join(" ");
+const CONTEXT =
+  "An AI coding agent will run `command` in a `shell` terminal; `agent_description` is its own note. `sources` is code the command actually executes (scripts, package.json scripts, make recipes, imported modules); long code is cut to `code_head`, `code_tail` and `loop_related_lines`. Judge by what the executed code does, not by names.";
 
 export function buildRequest({ toolName, command, description, sources = [] }) {
   const state = { shell: toolName === "PowerShell" ? "powershell" : "bash" };
@@ -207,16 +168,19 @@ export function decide(answer, { runInBackground, threshold }) {
 const isBorderline = (blockedProb, threshold) => Math.abs(blockedProb - threshold) < BORDERLINE;
 
 // Jev에 묻고 정책을 적용한다. 임계값 근처면 한 번 더 물어 평균을 낸다.
+// `inputTokens` 는 이 판단에 쓴 입력 토큰의 합이다(재질의 포함, 로그용).
 export async function judge(request, { apiKey, runInBackground, threshold }) {
   const first = await askJev(request, { apiKey });
   let answer = first.answers.intent;
+  let inputTokens = first.usage?.input_tokens ?? 0;
   let requeried = false;
   if (isBorderline(decide(answer, { runInBackground, threshold }).blockedProb, threshold)) {
     const second = await askJev(request, { apiKey });
     answer = averageAnswers([answer, second.answers.intent]);
+    inputTokens += second.usage?.input_tokens ?? 0;
     requeried = true;
   }
-  return { model: first.model, answer, requeried, verdict: decide(answer, { runInBackground, threshold }) };
+  return { model: first.model, answer, requeried, inputTokens, verdict: decide(answer, { runInBackground, threshold }) };
 }
 
 const GUIDANCE = {
